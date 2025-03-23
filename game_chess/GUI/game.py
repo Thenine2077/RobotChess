@@ -16,10 +16,10 @@ pygame.init()
 FONT = pygame.font.Font(None, 24)  # ใช้ font เริ่มต้นของ pygame
 
 # โฟลเดอร์ที่เก็บไฟล์หมาก PNG
-ASSET_FOLDER = r"D:\RobotChess\RobotChess\Project Robot\assets"
+ASSET_FOLDER = r"D:\Project RobotChess\RobotChess\game_chess\GUI\assets"
 
 # ตำแหน่งของ Stockfish
-STOCKFISH_PATH = r"D:\RobotChess\RobotChess\Project Robot\stockfish-windows-x86-64-avx2\stockfish\stockfish-windows-x86-64-avx2.exe"
+STOCKFISH_PATH = r"D:\Project RobotChess\RobotChess\game_chess\Ai\stockfish-windows-x86-64-avx2.exe"
 
 # จัดเก็บภาพหมากรุก
 piece_images = {}
