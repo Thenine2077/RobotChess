@@ -14,7 +14,7 @@ if __name__ == "__main__":
     move_queue = multiprocessing.Manager().Queue()
     
     # รัน `game.py` ใน Process แยก
-    game_process = multiprocessing.Process(target=__import__("game").play_chess, args=(move_queue,))
+    game_process = multiprocessing.Process(target=__import__("game").play_chess)
     game_process.start()
 
     # เริ่มรับ input จากผู้ใช้
