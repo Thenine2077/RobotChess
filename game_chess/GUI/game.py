@@ -218,8 +218,8 @@ def detect_move_vision():
         return origin, destination, moved_piece
 
     # ระบุ path ของภาพ before/after (ปรับให้ตรงกับไฟล์ของคุณ)
-    img_path_before = "D:/Project RobotChess/RobotChess/game_chess/GUI/pawn1.jpg"
-    img_path_after  = "D:/Project RobotChess/RobotChess/game_chess/GUI/pawn2.jpg"
+    img_path_before = "D:/Project RobotChess/RobotChess/game_chess/GUI/pawn2.jpg"
+    img_path_after  = "D:/Project RobotChess/RobotChess/game_chess/GUI/pawn1.jpg"
     import cv2
     img_before = cv2.imread(img_path_before)
     img_after  = cv2.imread(img_path_after)

@@ -124,8 +124,8 @@ def compare_board_states(state_before, state_after):
 # ===============================
 def main():
     # ระบุ path ของภาพ before และ after
-    img_path_before = "D:/Project RobotChess/RobotChess/game_chess/GUI/pawn1.jpg"
-    img_path_after  = "D:/Project RobotChess/RobotChess/game_chess/GUI/pawn2.jpg"  # ปรับให้เป็นไฟล์ภาพ “หลัง”
+    img_path_before = "D:/Project RobotChess/RobotChess/game_chess/GUI/pawn2.jpg"
+    img_path_after  = "D:/Project RobotChess/RobotChess/game_chess/GUI/pawn1.jpg"  # ปรับให้เป็นไฟล์ภาพ “หลัง”
     model_path = "D:/Project RobotChess/RobotChess/game_chess/runs/detect/train3/weights/best.pt"
 
     img_before = cv2.imread(img_path_before)
