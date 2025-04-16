@@ -6,7 +6,7 @@ inner_board_size = (7, 7)  # (cols, rows)
 criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
 
 # โหลดภาพ (ปรับชื่อไฟล์ตามที่คุณใช้งาน)
-img = cv2.imread('D:/Project RobotChess/RobotChess/game_chess/GUI/black_Bishop-10.jpg')
+img = cv2.imread('C:\Chess\RobotChess\game_chess\GUI\black_Bishop-10.jpg')
 gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
 # หาจุดมุม inner corners ของกระดาน

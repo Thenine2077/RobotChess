@@ -3,14 +3,17 @@ import chess
 import os
 import time
 import sys
+import cv2
+import numpy as np
 
-# โหลดโมดูล YOLO จาก ultralytics (ใช้สำหรับ auto-detect move) 
+# โหลด YOLO model จาก ultralytics (สำหรับ Auto Detect)
 try:
     from ultralytics import YOLO
 except ImportError:
-    YOLO = None  # ถ้าไม่มี YOLO จะไม่สามารถใช้ auto-detect ได้
+    YOLO = None
+    print("ไม่พบโมดูล ultralytics YOLO สำหรับการตรวจจับ Vision")
 
-# โหลด find_best_move จาก game_minimax หากมี
+# โหลด find_best_move จาก game_minimax (สำหรับ AI move)
 try:
     from game_minimax import find_best_move
 except ImportError:
@@ -21,9 +24,41 @@ except ImportError:
 
 pygame.init()
 pygame.key.set_repeat(500, 50)
+def load_pieces():
+    piece_images = {}
+    for piece, filename in PIECES.items():
+        path = os.path.join(ASSET_FOLDER, filename)
+        if os.path.exists(path):
+            img = pygame.image.load(path)
+            img = pygame.transform.scale(img, (SQUARE_SIZE, SQUARE_SIZE))
+            piece_images[piece] = img
+        else:
+            print("ไม่พบไฟล์:", path)
+    return piece_images
+
 
 # --------------------------------------------------------------------------------
-# CONFIG: ค่าต่างๆ สำหรับ UI
+# RealTimeCamera: โมดูลสำหรับรับภาพแบบ Real-Time ด้วย OpenCV
+# --------------------------------------------------------------------------------
+class RealTimeCamera:
+    def __init__(self, camera_index=0, width=800, height=800):
+        self.cap = cv2.VideoCapture(camera_index)
+        if not self.cap.isOpened():
+            raise RuntimeError("ไม่สามารถเปิดกล้องได้")
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+    def get_frame(self):
+        ret, frame = self.cap.read()
+        if not ret:
+            raise RuntimeError("ไม่สามารถรับเฟรมจากกล้องได้")
+        return frame
+    def release(self):
+        if self.cap is not None:
+            self.cap.release()
+        cv2.destroyAllWindows()
+
+# --------------------------------------------------------------------------------
+# CONFIG: การตั้งค่า UI และเวลา
 # --------------------------------------------------------------------------------
 SCREEN_WIDTH = 900
 SCREEN_HEIGHT = 600
@@ -31,7 +66,7 @@ SCREEN_HEIGHT = 600
 BOARD_SIZE = 600
 SQUARE_SIZE = BOARD_SIZE // 8
 
-# กระดานอยู่ด้านซ้าย
+# กระดาน simulation อยู่ด้านซ้าย
 BOARD_X = 0
 BOARD_Y = 0
 
@@ -41,7 +76,7 @@ PANEL_Y = 20
 PANEL_WIDTH = SCREEN_WIDTH - (BOARD_X + BOARD_SIZE + 40)
 PANEL_HEIGHT = 500
 
-# สีต่างๆ
+# สี
 BACKGROUND_COLOR = (255, 255, 255)
 PANEL_BG_COLOR = (240, 240, 240)
 BOARD_WHITE = (240, 217, 181)
@@ -49,10 +84,10 @@ BOARD_BROWN = (181, 136, 99)
 TEXT_COLOR = (0, 0, 0)
 STATUS_COLOR = (255, 0, 0)
 
-# ฟอนต์ (สามารถเปลี่ยนเป็นฟอนต์ที่รองรับภาษาไทยได้)
+# ฟอนต์
 FONT = pygame.font.Font(None, 24)
 
-# โฟลเดอร์สำหรับภาพหมาก (ปรับให้ตรงกับระบบของคุณ)
+# โฟลเดอร์สำหรับภาพหมาก (simulation assets)
 ASSET_FOLDER = r"C:/Chess/RobotChess/game_chess/GUI/assets"
 PIECES = {
     "p": "b_p.png",
@@ -69,23 +104,31 @@ PIECES = {
     "K": "w_k.png",
 }
 
-# --------------------------------------------------------------------------------
-# ฟังก์ชันสำหรับโหลดรูปหมาก
-# --------------------------------------------------------------------------------
-def load_pieces():
-    piece_images = {}
-    for piece, filename in PIECES.items():
-        path = os.path.join(ASSET_FOLDER, filename)
-        if os.path.exists(path):
-            img = pygame.image.load(path)
-            img = pygame.transform.scale(img, (SQUARE_SIZE, SQUARE_SIZE))
-            piece_images[piece] = img
-        else:
-            print("ไม่พบไฟล์:", path)
-    return piece_images
+# Path ของโมเดล YOLO (ปรับให้ตรงกับระบบของคุณ)
+model_path = r"C:\Chess\RobotChess\game_chess\runs\detect\train3\weights\best.pt"
+if YOLO is not None:
+    try:
+        vision_model = YOLO(model_path)
+    except Exception as e:
+        print("โหลด YOLO model ไม่ได้:", e)
+        vision_model = None
+else:
+    vision_model = None
 
 # --------------------------------------------------------------------------------
-# ฟังก์ชันสำหรับวาดกระดานหมากรุก
+# ฟังก์ชันสำหรับพิมพ์ board state ในรูปแบบ sorted column-wise
+# --------------------------------------------------------------------------------
+def print_board_state(state_dict, label):
+    print(f"Board State {label}:")
+    cols = ['A','B','C','D','E','F','G','H']
+    for col in cols:
+        for row in range(1, 9):
+            key = f"{col}{row}"
+            print(f"{key}: {state_dict.get(key, None)}")
+    print("\n")
+
+# --------------------------------------------------------------------------------
+# ฟังก์ชันสำหรับวาดกระดาน simulation (ใน UI)
 # --------------------------------------------------------------------------------
 def draw_board(screen, board, piece_images):
     for row in range(8):
@@ -98,18 +141,18 @@ def draw_board(screen, board, piece_images):
             piece = board.piece_at(chess.square(col, 7 - row))
             if piece:
                 screen.blit(piece_images[piece.symbol()], (rect.x, rect.y))
-    # วาดตัวเลข (1-8) ซ้ายกระดาน
+    # ตัวเลข 1-8 ซ้าย
     for i in range(8):
         num_text = FONT.render(str(8 - i), True, TEXT_COLOR)
         screen.blit(num_text, (BOARD_X - 20, BOARD_Y + i * SQUARE_SIZE + SQUARE_SIZE // 3))
-    # วาดตัวอักษร (a-h) ด้านล่าง
+    # ตัวอักษร a-h ด้านล่าง
     for i in range(8):
         letter_text = FONT.render(chr(ord('a') + i), True, TEXT_COLOR)
-        screen.blit(letter_text, (BOARD_X + i * SQUARE_SIZE + SQUARE_SIZE // 2 - 5,
+        screen.blit(letter_text, (BOARD_X + i * SQUARE_SIZE + SQUARE_SIZE//2 - 5,
                                   BOARD_Y + BOARD_SIZE + 5))
 
 # --------------------------------------------------------------------------------
-# ฟังก์ชัน format_time สำหรับจัดรูปแบบเวลา mm:ss
+# ฟังก์ชัน format_time สำหรับจัดรูปแบบเวลา (mm:ss)
 # --------------------------------------------------------------------------------
 def format_time(seconds):
     m = int(seconds // 60)
@@ -117,20 +160,9 @@ def format_time(seconds):
     return f"{m:02d}:{s:02d}"
 
 # --------------------------------------------------------------------------------
-# ฟังก์ชันสำหรับตรวจจับ move ด้วย Vision (Auto Detect) 
+# Vision Detection: ตรวจจับ move ระหว่างสองเฟรม (รับภาพจากกล้องเป็น numpy array)
 # --------------------------------------------------------------------------------
-def detect_move_vision():
-    """
-    ตรวจจับ move จากภาพ before/after ด้วย OpenCV และ YOLO
-    คืนค่าเป็น move UCI (เช่น "d3d2") หรือ None หากตรวจจับไม่พบ
-    """
-    if YOLO is None:
-        print("ไม่พบโมดูล ultralytics YOLO สำหรับ Auto Detect")
-        return None
-
-    import cv2
-    import numpy as np
-
+def detect_move_vision_between_frames(img_before, img_after, model):
     def order_points(pts):
         rect = np.zeros((4, 2), dtype="float32")
         s = pts.sum(axis=1)
@@ -143,27 +175,33 @@ def detect_move_vision():
 
     def find_board_contour(image):
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+        blurred = cv2.GaussianBlur(gray, (5,5), 0)
         edges = cv2.Canny(blurred, 50, 150)
+        cv2.imshow("Edges", edges)
+        cv2.waitKey(1)
         contours, _ = cv2.findContours(edges.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         contours = sorted(contours, key=cv2.contourArea, reverse=True)
         board_contour = None
         for cnt in contours:
             peri = cv2.arcLength(cnt, True)
-            approx = cv2.approxPolyDP(cnt, 0.02 * peri, True)
-            if len(approx) == 4:
+            approx = cv2.approxPolyDP(cnt, 0.02*peri, True)
+            if len(approx)==4:
                 board_contour = approx
                 break
+        if board_contour is not None:
+            print("Detected board_contour:", board_contour)
+        else:
+            print("No board_contour found")
         return board_contour
 
     def warp_board(image, board_contour, board_width=800, board_height=800):
-        pts = board_contour.reshape(4, 2)
+        pts = board_contour.reshape(4,2)
         rect = order_points(pts)
         pts_dst = np.array([
-            [0, 0],
-            [board_width - 1, 0],
-            [board_width - 1, board_height - 1],
-            [0, board_height - 1]
+            [0,0],
+            [board_width-1, 0],
+            [board_width-1, board_height-1],
+            [0, board_height-1]
         ], dtype="float32")
         M = cv2.getPerspectiveTransform(rect, pts_dst)
         warped = cv2.warpPerspective(image, M, (board_width, board_height))
@@ -178,11 +216,10 @@ def detect_move_vision():
         cell_w = board_w // 8
         cell_h = board_h // 8
         cols = ['A','B','C','D','E','F','G','H']
-        rows = [8,7,6,5,4,3,2,1]
-        for i in range(8):
-            for j in range(8):
-                square = f"{cols[j]}{rows[i]}"
-                board_state[square] = None
+        rows = [1,2,3,4,5,6,7,8]
+        for col in cols:
+            for row in rows:
+                board_state[f"{col}{row}"] = None
         def map_center(cx, cy):
             col_index = int(cx // cell_w)
             row_index = int(cy // cell_h)
@@ -196,8 +233,8 @@ def detect_move_vision():
                 label = model.names[class_id]
                 w_box = x2 - x1
                 h_box = y2 - y1
-                cx = x1 + w_box / 2
-                cy = y1 + h_box / 2
+                cx = x1 + w_box/2
+                cy = y1 + h_box/2
                 square = map_center(cx, cy)
                 board_state[square] = label
         return board_state
@@ -207,82 +244,122 @@ def detect_move_vision():
         destination = None
         moved_piece = None
         for square in state_before.keys():
-            piece_before = state_before[square]
-            piece_after = state_after[square]
-            if piece_before != piece_after:
-                if piece_before is not None and (piece_after is None or piece_before != piece_after):
+            pb = state_before[square]
+            pa = state_after[square]
+            if pb != pa:
+                if pb is not None and (pa is None or pb != pa):
                     origin = square
-                    moved_piece = piece_before
-                if piece_after is not None and (piece_before is None or piece_before != piece_after):
+                    moved_piece = pb
+                if pa is not None and (pb is None or pb != pa):
                     destination = square
         return origin, destination, moved_piece
 
-    # ระบุ path ของภาพ before/after (ปรับให้ตรงกับไฟล์ของคุณ)
-    img_path_before = "D:/Project RobotChess/RobotChess/game_chess/GUI/pawn2.jpg"
-    img_path_after  = "D:/Project RobotChess/RobotChess/game_chess/GUI/pawn1.jpg"
-    import cv2
-    img_before = cv2.imread(img_path_before)
-    img_after  = cv2.imread(img_path_after)
-    
-    if img_before is None or img_after is None:
-        print("ไม่สามารถโหลดภาพ before/after ได้ กรุณาตรวจสอบ path")
-        return None
-    
     board_contour = find_board_contour(img_before)
     if board_contour is None:
-        print("ไม่พบ contour ของกระดานในภาพ before")
-        return None
-    
+        print("detect_move_vision_between_frames: ไม่พบ board contour ในภาพ before")
+        return None, None, None, None, None
     warped_before = warp_board(img_before, board_contour, 800, 800)
-    warped_after  = warp_board(img_after, board_contour, 800, 800)
-    
-    # ระบุ path ของโมเดล YOLO (ปรับให้ตรงกับไฟล์ model ของคุณ)
-    model_path = "C:/Chess/RobotChess/game_chess/runs/detect/train3/best.pt"
-    try:
-        model = YOLO(model_path)
-    except Exception as e:
-        print("โหลด YOLO model ไม่ได้:", e)
-        return None
-    
+    warped_after = warp_board(img_after, board_contour, 800, 800)
+
+    # แสดงภาพ warped ก่อนและหลัง (สำหรับการ calibration)
+    cv2.imshow("Warped Before", warped_before)
+    cv2.imshow("Warped After", warped_after)
+    cv2.waitKey(1)
+
     state_before = get_board_state_from_warped(warped_before, model)
     state_after = get_board_state_from_warped(warped_after, model)
     origin, destination, moved_piece = compare_board_states(state_before, state_after)
-    if origin and destination and moved_piece:
-        move_str = origin.lower() + destination.lower()
-        print(f"{moved_piece} ถูกขยับจาก {origin} ไป {destination} (Move: {move_str})")
-        return move_str
-    else:
-        print("ไม่พบการเปลี่ยนแปลงที่ชัดเจนใน board state")
-        return None
+    return state_before, state_after, origin, destination, moved_piece
 
 # --------------------------------------------------------------------------------
-# MAIN GAME LOOP: Dual Move Input (Manual และ Auto Detect)
+# ฟังก์ชัน Calibration: เปิดหน้าต่าง Calibration สำหรับทดสอบระบบกล้องและการ warp
+# --------------------------------------------------------------------------------
+def camera_calibration():
+    """
+    เปิดกล้องในโหมด Calibration โดยแสดงหน้าต่าง "Camera Calibration" 
+    ให้ผู้ใช้กด F ครั้งแรกเพื่อจับภาพ Before และกด F ครั้งที่สองเพื่อจับภาพ After
+    จากนั้นจะแสดงภาพ warped ทั้งสองและพิมพ์ board state
+    """
+    cam = None
+    try:
+        cam = RealTimeCamera(camera_index=0, width=800, height=800)
+    except Exception as e:
+        print("Error initializing camera in calibration:", e)
+        return
+
+    cv2.namedWindow("Camera Calibration")
+    print("Camera Calibration Mode: กด 'f' เพื่อจับภาพ (F สำหรับ Before, F อีกครั้งสำหรับ After)")
+    before_captured = False
+    img_before = None
+    img_after = None
+
+    while True:
+        frame = cam.get_frame()
+        cv2.imshow("Camera Calibration", frame)
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('f'):
+            if not before_captured:
+                img_before = frame.copy()
+                before_captured = True
+                print("Captured Before image.")
+            else:
+                img_after = frame.copy()
+                print("Captured After image.")
+                break
+        elif key == ord('q'):
+            print("Calibration aborted.")
+            cam.release()
+            cv2.destroyWindow("Camera Calibration")
+            return
+
+    # ทำการตรวจจับและ warp ภาพ
+    if vision_model is not None and img_before is not None and img_after is not None:
+        bs_before, bs_after, origin, destination, moved_piece = detect_move_vision_between_frames(img_before, img_after, vision_model)
+        if bs_before and bs_after:
+            print_board_state(bs_before, "BEFORE")
+            print_board_state(bs_after, "AFTER")
+        if origin and destination and moved_piece:
+            print(f"[Calibration] {moved_piece} ขยับจาก {origin} ไป {destination}\n")
+        else:
+            print("Calibration: ไม่พบการเปลี่ยนแปลงที่ชัดเจน\n")
+    else:
+        print("Calibration: ไม่สามารถตรวจจับได้เนื่องจากโมเดลหรือภาพมีปัญหา")
+    cam.release()
+    cv2.destroyAllWindows()
+
+# --------------------------------------------------------------------------------
+# MAIN GAME LOOP: รวม Chess UI, Vision Detection แบบ Real-Time จากกล้อง
 # --------------------------------------------------------------------------------
 def play_chess():
     screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-    pygame.display.set_caption("Robot Chess with Dual Move Input")
+    pygame.display.set_caption("Robot Chess with Continuous Vision Detection")
     clock = pygame.time.Clock()
 
     board = chess.Board()
     piece_images = load_pieces()
 
-    # เวลาของแต่ละฝั่ง (ตัวอย่าง 5 นาที)
     white_time_left = 5 * 60
     black_time_left = 5 * 60
 
-    # กำหนด state ของเกม:
-    # "WHITE_TURN"    - ผู้เล่น (ขาว) กรอก move ด้วยตัวเอง (หรือ Auto Detect)
-    # "BLACK_TURN"    - AI (ดำ) คิดประมาณ 3 วินาที
-    # "POST_AI_DELAY" - หน่วงเวลาหลัง AI เดิน (3 วิ)
-    # "GAME_OVER"     - เกมจบ
-    state = "WHITE_TURN"
+    state = "WHITE_TURN"  # "WHITE_TURN", "BLACK_TURN", "POST_AI_DELAY", "GAME_OVER"
     ai_think_time = 3000
     post_ai_delay = 3000
     state_start_ticks = pygame.time.get_ticks()
 
-    # ตัวแปรสำหรับช่อง input move
     move_input = ""
-    move_made = False  # เช็คว่าผู้เล่นได้เดินหมากแล้วหรือยัง
+    move_made = False
+
+    # สร้าง instance ของ RealTimeCamera สำหรับรับภาพจากกล้อง
+    try:
+        cam = RealTimeCamera(camera_index=0, width=800, height=800)
+    except Exception as e:
+        print("Error initializing camera:", e)
+        cam = None
+
+    if cam is not None:
+        prev_frame = cam.get_frame()
+    else:
+        prev_frame = None
 
     running = True
     while running:
@@ -293,7 +370,15 @@ def play_chess():
             if event.type == pygame.QUIT:
                 running = False
 
-            # รับ event ใน state "WHITE_TURN"
+            # เพิ่มการตรวจจับปุ่ม Calibration ใน Panel
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                mx, my = event.pos
+                calibration_rect = pygame.Rect(PANEL_X + 20, PANEL_Y + 320, 100, 30)
+                if calibration_rect.collidepoint(mx, my):
+                    print("Entering Calibration Mode...")
+                    camera_calibration()
+
+            # รับ event ใน state WHITE_TURN
             if state == "WHITE_TURN":
                 if event.type == pygame.TEXTINPUT:
                     move_input += event.text
@@ -313,19 +398,43 @@ def play_chess():
                         move_input = ""
                 if event.type == pygame.MOUSEBUTTONDOWN:
                     mx, my = event.pos
-                    # ปุ่ม End Turn (เฉพาะเมื่อ move ถูกทำแล้ว)
+                    # ปุ่ม End Turn
                     end_turn_rect = pygame.Rect(PANEL_X + 20, PANEL_Y + 220, 80, 30)
                     if end_turn_rect.collidepoint(mx, my) and move_made:
+                        if cam is not None:
+                            current_frame = cam.get_frame()
+                        else:
+                            current_frame = None
+                        if current_frame is not None and prev_frame is not None and vision_model is not None:
+                            bs_before, bs_after, origin, destination, moved_piece = detect_move_vision_between_frames(prev_frame, current_frame, vision_model)
+                            if bs_before and bs_after:
+                                print_board_state(bs_before, "BEFORE")
+                                print_board_state(bs_after, "AFTER")
+                            if origin and destination and moved_piece:
+                                print(f"[Human Move] {moved_piece} ขยับจาก {origin} ไป {destination}\n")
+                            else:
+                                print("ไม่พบการเปลี่ยนแปลงที่ชัดเจนหลัง human move\n")
+                        prev_frame = current_frame
                         state = "BLACK_TURN"
                         state_start_ticks = pygame.time.get_ticks()
                         move_made = False
                     # ปุ่ม Auto Detect
                     auto_detect_rect = pygame.Rect(PANEL_X + 20, PANEL_Y + 260, 100, 30)
                     if auto_detect_rect.collidepoint(mx, my):
-                        detected_move = detect_move_vision()
-                        if detected_move is not None:
-                            move_input = detected_move
-                            print("Auto Detected Move:", move_input)
+                        if cam is not None:
+                            current_frame = cam.get_frame()
+                        else:
+                            current_frame = None
+                        if current_frame is not None and prev_frame is not None and vision_model is not None:
+                            bs_before, bs_after, origin, destination, moved_piece = detect_move_vision_between_frames(prev_frame, current_frame, vision_model)
+                            if bs_before and bs_after:
+                                print_board_state(bs_before, "BEFORE")
+                                print_board_state(bs_after, "AFTER")
+                            if origin and destination and moved_piece:
+                                move_input = origin.lower() + destination.lower()
+                                print(f"[Auto Detect] {moved_piece} ขยับจาก {origin} ไป {destination} (Move: {move_input})\n")
+                            else:
+                                print("ไม่พบการเปลี่ยนแปลงที่ชัดเจนในการ Auto Detect\n")
                     # ปุ่ม Exit
                     exit_rect = pygame.Rect(PANEL_X, SCREEN_HEIGHT - 60, PANEL_WIDTH, 40)
                     if exit_rect.collidepoint(mx, my):
@@ -354,8 +463,22 @@ def play_chess():
             if elapsed >= ai_think_time:
                 if not board.is_game_over():
                     ai_move = find_best_move(board, depth=3)
-                    print(f"AI Move: {ai_move}")
+                    print(f"[AI Move] AI เดิน: {ai_move}")
                     board.push(ai_move)
+                if cam is not None:
+                    current_frame = cam.get_frame()
+                else:
+                    current_frame = None
+                if current_frame is not None and prev_frame is not None and vision_model is not None:
+                    bs_before, bs_after, origin, destination, moved_piece = detect_move_vision_between_frames(prev_frame, current_frame, vision_model)
+                    if bs_before and bs_after:
+                        print_board_state(bs_before, "BEFORE")
+                        print_board_state(bs_after, "AFTER")
+                    if origin and destination and moved_piece:
+                        print(f"[AI Move Vision] {moved_piece} ขยับจาก {origin} ไป {destination}\n")
+                    else:
+                        print("ไม่พบการเปลี่ยนแปลงที่ชัดเจนหลัง AI move\n")
+                prev_frame = current_frame
                 state = "POST_AI_DELAY"
                 state_start_ticks = pygame.time.get_ticks()
         elif state == "POST_AI_DELAY":
@@ -363,6 +486,7 @@ def play_chess():
             if elapsed >= post_ai_delay:
                 state = "WHITE_TURN"
                 state_start_ticks = pygame.time.get_ticks()
+        # state "GAME_OVER" คงอยู่
 
         # กำหนดข้อความ Status
         if state == "WHITE_TURN":
@@ -378,11 +502,11 @@ def play_chess():
         else:
             status_message = ""
 
-        # ------ DRAWING ------
+        # ------ Drawing UI ------
         screen.fill(BACKGROUND_COLOR)
         draw_board(screen, board, piece_images)
 
-        # วาด Panel
+        # Panel
         panel_rect = pygame.Rect(PANEL_X, PANEL_Y, PANEL_WIDTH, PANEL_HEIGHT)
         pygame.draw.rect(screen, PANEL_BG_COLOR, panel_rect)
 
@@ -423,6 +547,15 @@ def play_chess():
             end_turn_rect.y + (end_turn_rect.height - end_turn_text.get_height()) // 2
         ))
 
+        # ปุ่ม Calibration
+        calibration_rect = pygame.Rect(PANEL_X + 20, PANEL_Y + 320, 100, 30)
+        pygame.draw.rect(screen, (0, 150, 0), calibration_rect)
+        calibration_text = FONT.render("Calibration", True, (255,255,255))
+        screen.blit(calibration_text, (
+            calibration_rect.x + (calibration_rect.width - calibration_text.get_width()) // 2,
+            calibration_rect.y + (calibration_rect.height - calibration_text.get_height()) // 2
+        ))
+
         # ส่วนสำหรับ Black: Label + Timer
         black_label = FONT.render("Black", True, TEXT_COLOR)
         black_time_str = format_time(black_time_left)
@@ -441,6 +574,8 @@ def play_chess():
 
         pygame.display.flip()
 
+    if cam is not None:
+        cam.release()
     pygame.quit()
 
 if __name__ == "__main__":
